@@ -1,3 +1,4 @@
+from app.modbus_client import read_coil, write_coil, read_holding_register, write_holding_register
 from app.opcua_client import opcua_read, opcua_write
 from fastapi import FastAPI, HTTPException
 from prometheus_client import Counter, Summary, make_asgi_app
@@ -17,6 +18,8 @@ def healthz():
 @app.get("/")
 def root():
     return {"hello": "world"}
+
+# OPC UA endpoints (see opcua_client.py)
 
 @app.get("/opcua/read")
 @REQUEST_TIME.time()
@@ -43,3 +46,23 @@ def ua_write(body: UAWriteBody):
     except Exception as e:
         # return the real reason instead of a generic 500
         raise HTTPException(status_code=400, detail=f"OPC UA write failed: {e}")
+
+# Modbus endpoints (see modbus_client.py)
+
+@app.get("/modbus/read_coil")
+def mb_read_coil(host: str = "127.0.0.1", port: int = 5020, address: int = 1):
+    return {"address": address, "value": read_coil(host, port, address)}
+
+@app.post("/modbus/write_coil")
+def mb_write_coil(host: str = "127.0.0.1", port: int = 5020, address: int = 1, value: bool = True):
+    COMMANDS_TOTAL.labels(kind="modbus_write_coil").inc()
+    return {"ok": write_coil(host, port, address, value)}
+
+@app.get("/modbus/read_hr")
+def mb_read_hr(host: str = "127.0.0.1", port: int = 5020, address: int = 1):
+    return {"address": address, "value": read_holding_register(host, port, address)}
+
+@app.post("/modbus/write_hr")
+def mb_write_hr(host: str = "127.0.0.1", port: int = 5020, address: int = 1, value: int = 123):
+    COMMANDS_TOTAL.labels(kind="modbus_write_hr").inc()
+    return {"ok": write_holding_register(host, port, address, value)}
