@@ -13,6 +13,7 @@ import json
 from typing import Any, Dict
 from app.idempotency import reserve, complete, lookup
 from app.schemas import CommandBase
+from asyncua.sync import Client as UaClient
 
 load_dotenv()
 
@@ -85,6 +86,17 @@ async def metrics_middleware(request: Request, call_next):
 @app.on_event("startup")
 async def _startup():
     log.info("starting service=%s version=%s", SERVICE, VERSION)
+    app.state.ua_client = UaClient(url="opc.tcp://localhost:4840/freeopcua/server/")
+    app.state.ua_client.connect()
+    log.info("opcua pooled client connected")
+
+@app.on_event("shutdown")
+async def _shutdown():
+    try:
+        app.state.ua_client.disconnect()
+        log.info("opcua pooled client disconnected")
+    except Exception:
+        pass
 
 # ---------- basic endpoints ----------
 @app.get("/healthz")
@@ -138,7 +150,7 @@ def execute_command(cmd: CommandBase):
 def ua_read(url: str = "opc.tcp://localhost:4840/freeopcua/server/",
             node_id: str = "ns=2;s=Demo/SpeedRpm"):
     try:
-        val = opcua_read(url, node_id)
+        val = opcua_read(url, node_id, client=app.state.ua_client)
         return {"node_id": node_id, "value": val}
     except Exception as e:
         raise HTTPException(500, f"OPC UA read failed: {e}")
@@ -151,7 +163,7 @@ class UAWriteBody(BaseModel):
 @app.post("/opcua/write")
 def ua_write(body: UAWriteBody):
     try:
-        new_val = opcua_write(body.url, body.node_id, body.value)
+        new_val = opcua_write(body.url, body.node_id, body.value, client=app.state.ua_client)
         COMMANDS_TOTAL.labels(kind="opcua_write").inc()
         return {"ok": True, "value": new_val}
     except Exception as e:
