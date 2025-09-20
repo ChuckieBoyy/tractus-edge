@@ -1,11 +1,14 @@
 For the fastapi terminal (main.py): 
-fastapi dev app/main.py 
-
-or
- 
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
 
-for the server terminal (opcua_sim_server.py): .\.venv\Scripts\python.exe app\opcua_sim_server.py
+
+for the OPC UA server (opcua_sim_server.py)
+ .\.venv\Scripts\python.exe app\opcua_sim_server.py
+
+
+For the Modbus Server (Modbus_sim_server.py):
+.\.venv\Scripts\python.exe app\modbus_sim_server.py
+
 
 at first we need to do in both of them:
 .\.venv\Scripts\Activate
