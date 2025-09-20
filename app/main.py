@@ -1,5 +1,5 @@
 # app/main.py
-import os, logging, time
+import os, logging, time, json
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from starlette.requests import Request
@@ -9,6 +9,10 @@ from pydantic import BaseModel
 from app.opcua_client import opcua_read, opcua_write
 from app.modbus_client import read_coil, write_coil, read_holding_register, write_holding_register
 from dotenv import load_dotenv
+import json
+from typing import Any, Dict
+from app.idempotency import reserve, complete, lookup
+from app.schemas import CommandBase
 
 load_dotenv()
 
@@ -91,9 +95,43 @@ def healthz():
 def version():
     return {"service": SERVICE, "version": VERSION}
 
-@app.get("/")
-def root():
-    return {"hello": "world"}
+@app.post("/commands/validate")
+def validate_command(cmd: CommandBase):
+    # Do not execute yet; just echo back normalized payload
+    return {"ok": True, "command": cmd.model_dump()}
+
+@app.post("/commands/execute")
+def execute_command(cmd: CommandBase):
+    key = cmd.idempotencyKey
+    # idempotency reserve (if provided)
+    if key:
+        reserved = reserve(key, cmd.deviceId, cmd.capability)
+        if not reserved:
+            found = lookup(key)
+            if found:
+                status, result_json = found
+                payload = json.loads(result_json) if result_json else {"ok": False}
+                if status == "completed":
+                    return payload
+                if status == "failed":
+                    raise HTTPException(status_code=400, detail=payload.get("error", "previous failure"))
+                # 'accepted' or unknown – still in flight
+                raise HTTPException(status_code=409, detail="command in progress; retry later")
+
+    # execute
+    try:
+        res = _execute_capability(cmd.capability, cmd.params)
+        kind = res.get("kind", cmd.capability)
+        COMMANDS_TOTAL.labels(kind=kind).inc()
+        response = {"ok": True, "commandId": str(cmd.id), "result": res}
+        if key:
+            complete(key, json.dumps(response), "completed")
+        return response
+    except Exception as e:
+        if key:
+            complete(key, json.dumps({"ok": False, "error": str(e)}), "failed")
+        raise HTTPException(status_code=400, detail=str(e))
+
 
 # ---------- OPC UA ----------
 @app.get("/opcua/read")
@@ -155,3 +193,32 @@ def mb_write_hr(host: str = "127.0.0.1", port: int = 5020, address: int = 1, val
         return {"ok": ok}
     except Exception as e:
         raise HTTPException(500, f"Modbus write_hr failed: {e}")
+
+# ---------- generic command execution ----------
+
+def _execute_capability(capability: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    if capability == "opcua.write@v1":
+        url = params.get("url", "opc.tcp://localhost:4840/freeopcua/server/")
+        node_id = params["nodeId"]
+        value = params["value"]
+        new_val = opcua_write(url, node_id, value)
+        return {"kind": "opcua_write", "value": new_val}
+
+    elif capability == "modbus.write_hr@v1":
+        host = params.get("host", "127.0.0.1")
+        port = int(params.get("port", 5020))
+        address = int(params["address"])
+        value = int(params["value"])
+        ok = write_holding_register(host, port, address, value)
+        return {"kind": "modbus_write_hr", "ok": ok, "address": address, "value": value}
+
+    elif capability == "modbus.write_coil@v1":
+        host = params.get("host", "127.0.0.1")
+        port = int(params.get("port", 5020))
+        address = int(params["address"])
+        value = bool(params["value"])
+        ok = write_coil(host, port, address, value)
+        return {"kind": "modbus_write_coil", "ok": ok, "address": address, "value": value}
+
+    else:
+        raise HTTPException(status_code=400, detail=f"unknown capability: {capability}")

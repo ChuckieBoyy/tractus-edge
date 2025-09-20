@@ -1,0 +1,21 @@
+For the fastapi terminal (main.py): 
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
+
+
+for the OPC UA server (opcua_sim_server.py)
+ .\.venv\Scripts\python.exe app\opcua_sim_server.py
+
+
+For the Modbus Server (Modbus_sim_server.py):
+.\.venv\Scripts\python.exe app\modbus_sim_server.py
+
+
+at first we need to do in both of them:
+.\.venv\Scripts\Activate
+
+# from your project root
+.\.venv\Scripts\Activate
+
+# force install into THIS interpreter
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install pymodbus
